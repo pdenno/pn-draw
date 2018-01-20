@@ -1,8 +1,8 @@
 (ns pdenno.pn-draw.core
   "Petri net draw code"
-  {:author "Peter Denno"}
   (:require [quil.core :as q]
-            [quil.middleware :as qm]))
+            [quil.middleware :as qm]
+            [pdenno.pn-draw.util :as util :refer :all]))
 
 ;;; ToDo: * Replace pn-trans-point: review everything on the trans and distribute
 ;;;         so that things are on the correct side, not overlapping, and spaced nicely.
@@ -14,20 +14,12 @@
 ;;;       - display multiplicities > 1
 ;;;       - selective redraw
 
-(declare pn-geom)
-
-;;;================== Stuff borrowed from pnu (not cljs)  ========================
-#?(:cljs
-   (defn ppp []
-     (binding [cljs.pprint/*print-right-margin* 140]
-       (pprint *1))))
-
-#?(:cljs
-   (defn ppprint [arg]
-     (binding [cljs.pprint/*print-right-margin* 140]
-       (pprint arg))))
+(declare pn-geom basic-candidates trans-connects)
 
 (defn transition? [obj] (:tid obj))
+(defn arc? [obj] (:aid obj))
+(defn place? [obj] (:pid obj))
+(defn pn? [obj] (and (:places obj) (:transitions obj) (:arcs obj) obj))
 
 (defn name2obj
   [pn name]
@@ -35,14 +27,6 @@
    (some #(when (= name (:name %)) %) (:places pn))
    (some #(when (= name (:name %)) %) (:transitions pn))
    (some #(when (= name (:name %)) %) (:arcs pn))))
-
-(defn arc? [obj] (:aid obj))
-(defn place? [obj] (:pid obj))
-
-(defn pn?
-  "If the argument is a Petri net, return it; otherwise return false."
-  [obj]
-  (and (:places obj) (:transitions obj) (:arcs obj) obj))
 
 (def +place-dia+ 26)
 (def +trans-width+ 36)
@@ -54,7 +38,7 @@
 (def +arrowhead-angle+ "zero is on the shaft" (/ Math/PI 8.0))
 (def +lock-mouse-on+ (atom nil))
 (def +hilite-elem+ (atom nil))
-(def +display-pn+ (atom nil)) 
+(defonce +display-pn+ (atom nil)) 
 
 (defn rotate [x y theta]
   "Rotate (x,y) theta radians about origin."
@@ -92,7 +76,7 @@
   (q/background 200)) ; light grey
 
 (declare nearest-elem ref-points draw-elem draw-arc draw-tokens)
-(declare arc-coords-trans-to-place! arrowhead-coords pt-from-head)
+(declare arc-coords arrowhead-coords pt-from-head)
 (declare angle distance cross? hilite-elem! handle-move! rotate-trans!)
 
 (defn draw-pn []
@@ -132,7 +116,7 @@
             (assoc-in ?pn [:geom n :y] (q/mouse-y))))))))
 
 (defn hilite-elem!
-  "Set +hilight-elem+ and maybe +lock-mouse-on+."
+  "Set +hilite-elem+ and maybe +lock-mouse-on+."
   [pn]
   (let [nearest (or @+lock-mouse-on+ (nearest-elem pn [(q/mouse-x) (q/mouse-y)]))]
     (when (and nearest (q/mouse-pressed?)) (reset! +lock-mouse-on+ nearest))
@@ -185,7 +169,9 @@
         x (-> pn :geom n :x)
         y (-> pn :geom n :y)
         hilite @+hilite-elem+]
-    (q/fill (if (and (= n (:name hilite)) (:label? hilite)) (q/color 255 0 0) 0))
+    (q/fill (if (and (= n (:name hilite))
+                     (:label? hilite))
+              (q/color 255 0 0) 0))
     (q/text (name n)
             (+ x (-> pn :geom n :label-x-off))
             (+ y (-> pn :geom n :label-y-off)))
@@ -230,21 +216,32 @@
   (q/fill 0) ; (q/fill 0 0 255) ; blue
   (q/ellipse x y +token-dia+ +token-dia+))
 
-(defn midpoint [[x1 y1 x2 y2]] ; POD new
-  {:x (int (/ (+ x1 x2) 2.0))
-   :y (int (/ (+ y1 y2) 2.0))})
+(defn multiplicity-pos
+  "Coordinates of arc multiplicity text (number)."
+  [{x1 :tx y1 :ty x2 :px y2 :py}]
+  (let [offset 14
+        offset-angle 0.7854 ; pi/4
+        xmid   (/ (+ x1 x2) 2.0)
+        ymid   (/ (+ y1 y2) 2.0)
+        {xnear :x ynear :y} (pt-from-head x1 y1 xmid ymid offset)
+        len (distance xmid ymid xnear ynear)
+        angle (angle x1 y1 x2 y2)
+        xl (+ len (* offset (Math/cos (- Math/PI offset-angle))))
+        yl (* offset (Math/sin (- Math/PI offset-angle)))
+        lrotate (rotate xl yl angle)]
+    {:x (Math/round (+ xmid (:x lrotate)))
+     :y (Math/round (+ ymid (:y lrotate)))}))
 
 (defn draw-arc
   [pn arc]
   (let [place-is-head? (place? (name2obj pn (:target arc))),
         inhibitor? (= :inhibitor (:type arc)),
-        ln
-        (if place-is-head? 
-          (arc-coords-trans-to-place! pn (:source arc) (:target arc) (:name arc))
-          (arc-coords-trans-to-place! pn (:target arc) (:source arc) (:name arc)))]
+        ln (if place-is-head? 
+             (arc-coords pn (:source arc) (:target arc) (:name arc))
+             (arc-coords pn (:target arc) (:source arc) (:name arc)))]
     (when-not (== 1 (:multiplicity arc))
-      (let [midt (midpoint ln)]
-        (q/text (str (:multiplicity arc)) (:x midt) (:y midt)))) ; POD new  
+      (let [midt (multiplicity-pos ln)]
+        (q/text (str (:multiplicity arc)) (:x midt) (:y midt))))
     (if inhibitor? ; head is always the transition
       (let [center (pt-from-head (:px ln) (:py ln) (:tx ln) (:ty ln) (- (/ +inhibit-dia+ 2)))
             end (pt-from-head (:px ln) (:py ln) (:tx ln) (:ty ln) (- +inhibit-dia+))]
@@ -299,34 +296,48 @@
     {:x (+ x1 (* ratio (- x2 x1)))
      :y (+ y1 (* ratio (- y2 y1)))}))
 
-(declare interesect-circle pn-trans-point trans-connects)
-;;; POD Of course I could have just backed off a parametric line by +place-dia+/2...
-(defn arc-coords-trans-to-place!
-  [pn trans place arc]
+(declare arc-place-geom arc-trans-geom interesect-circle pn-trans-point trans-connects)
+(defn arc-coords
   "Return arc coordinates for argument arc (has aid)."
-  (let [[tx ty px py] (ref-points pn trans place) ; both are center points
-        bc (intersect-circle ; base
-            (double (- tx px))
-            (double (- ty py))
-            0.0
-            0.0
-            (/ +place-dia+ 2.0))
-        tc {:x1 (+ (:x1 bc) px) ; translated
-            :y1 (+ (:y1 bc) py)
-            :x2 (+ (:x2 bc) px)
-            :y2 (+ (:y2 bc) py)}
-        ;; choose closest position on transition (with consideration of other occupancy)
-        {:keys [pt take]} (pn-trans-point pn trans place arc)
-        [txn tyn] pt]
-    ;; Reserve the place on trans
-    (swap! +display-pn+
-           (fn [pn] (update-in pn [:geom trans :taken]
-                               #(assoc % arc take))))
-    ;; choose closest intersection on circle
-    (if (< (distance (:x1 tc) (:y1 tc) tx ty)
-           (distance (:x2 tc) (:y2 tc) tx ty))
-      {:tx txn :ty tyn :px (:x1 tc) :py (:y1 tc)}
-      {:tx txn :ty tyn :px (:x2 tc) :py (:y2 tc)})))
+  [pn trans place arc]
+  (merge (arc-trans-geom pn trans place arc)
+         (arc-place-geom pn trans place arc)))
+
+;;;   8----7----6----2----3----4----5
+;;;   |                             |
+;;;   1           (xc,yc)           0
+;;;   |                             |
+;;;   15---14---13---9---10---11---12
+(defn arc-trans-geom
+  "Return {:tx x :ty y :take <n>} of the best place for the argument arc to 
+   connect to the trans. Considers rotation and other occupancy on the trans."
+  [pn trans place arc]
+  (let [me-now? (-> pn :geom trans :taken arc)
+        t-connects (trans-connects pn trans)
+        t-result (fn [take] (let [c (nth t-connects take)] {:tx (first c) :ty (second c) :take take}))]
+    (if (and me-now? (not @+lock-mouse-on+)) ; did it already assigned and elements are not being moved.
+      (t-result me-now?)
+      (let [[cx cy tx ty] (ref-points pn place trans) ; these are center points
+            D (zipmap (range 16) (map (fn [txy] (distance (into [cx cy] txy))) t-connects))
+            gfn (fn [n] [n (get D n)])
+            top-showing? (< (get D 2) (get D 9))
+            left-showing? (< (get D 1) (get D 0))
+            closest (first (sort (fn [[_ d1] [_ d2]] (< d1 d2)) D))
+            taken-map (-> @+display-pn+ :geom trans :taken)
+            taken (set (remove #(= % me-now?) (vals taken-map)))
+            not-taken? (fn [n] (not (contains? taken n)))
+            y-diff (Math/abs (double (- cy ty))) 
+            ;; candidates =  ([0 94.25498543]  [8 111.00450929]...) -- distances
+            candidates (->> (basic-candidates D top-showing? left-showing?)
+                             (remove (fn [c] (some #(= (first c) %) taken)))
+                             (sort (fn [[_ d1] [_ d2]] (< d1 d2))))
+            best (cond (empty? candidates) closest
+                       (and (< y-diff 5) left-showing? (not-taken? 1)) (gfn 1) 
+                       (and (< y-diff 5) (not-taken? 0)) (gfn 0)
+                       (and +trans-prefer-center?+ top-showing? (not-taken? 2)) (gfn 2)
+                       (and +trans-prefer-center?+ (not top-showing?) (not-taken? 9)) (gfn 9)
+                       :else (first candidates))]
+        (t-result (first best))))))
 
 (defn trans-connects
   "Return a vector of [x, y] being the 16 connection points on a transition"
@@ -335,47 +346,6 @@
         rotation (or (-> @+display-pn+ :geom trans :rotate) 0)
         offsets (nth +rot-offsets+ rotation)]
     (vec (map (fn [[xoff yoff]] (vector (+ rx xoff) (+ ry yoff))) offsets))))
-
-;;;   8----7----6----2----3----4----5
-;;;   |                             |
-;;;   1           (xc,yc)           0
-;;;   |                             |
-;;;   15---14---13---9---10---11---12
-(declare basic-candidates)
-(defn pn-trans-point
-  "Return {:pt [x y] :take <n>] of the best place for the argument arc to 
-   connect to the trans. Considers rotation and other occupancy on the trans."
-  [pn trans place arc]
-  (let [me-now? (-> pn :geom trans :taken arc)
-        t-connects (trans-connects pn trans)]
-    (if (and me-now? (not @+lock-mouse-on+)) ; did it already assigned and elements are not being moved.
-      {:pt (nth t-connects me-now?) :take me-now?}
-      (let [[cx cy tx ty] (ref-points pn place trans) ; these are center points
-            D (zipmap (range 16) (map (fn [txy] (distance (into [cx cy] txy))) t-connects))
-            gfn (fn [n] [n (get D n)])
-            top-showing? (< (get D 2) (get D 9))
-            left-showing? (< (get D 1) (get D 0))
-            closest (first (sort (fn [[_ d1] [_ d2]] (< d1 d2)) D))
-            taken-map (-> @+display-pn+ :geom trans :taken)
-            taken (vals taken-map)
-            not-taken? (fn [n] (or (= n (arc taken-map)) ; take by me
-                                   (not (some #(= n %) taken))))
-            slope (Math/abs (double (/ (- cy ty) (max (- cx tx) 0.00001))))
-            y-diff (Math/abs (double (- cy ty))) ; POD draw.cljs doesn't use slope; it uses y-diff
-            ;; at this point candidates is a MAP INDEX BY AN INTEGER position See also gfn.
-            candidates (basic-candidates D top-showing? left-showing?)
-            candidates (remove (fn [c] (some #(= (first c) %) taken)) candidates)
-            candidates (sort (fn [[_ d1] [_ d2]] (< d1 d2)) candidates)
-            best (cond (empty? candidates) closest
-                       (and (< slope 0.3) left-showing? (not-taken? 1)) (gfn 1) ; POD see draw.cljs
-                       (and (< slope 0.3) (not-taken? 0)) (gfn 0)               ; POD see draw.cljs
-                       (and +trans-prefer-center?+ top-showing? (not-taken? 2)) (gfn 2)
-                       (and +trans-prefer-center?+ (not top-showing?) (not-taken? 9)) (gfn 9)
-                       #_(and +trans-prefer-center?+ (not-taken? 9)) #_(gfn 9) ; POD above is draw.cljs this is original
-                       :else (first candidates))] ; POD 8 below for jitter is sensitive to trans size
-        (if (and me-now? (< (Math/abs (- (get D me-now?) (get D (first best)))) 3)) ; POD draw.cljs has 8, not 3.
-          {:pt (nth t-connects me-now?) :take me-now?} ; Don't change. Prevent jitter.
-          {:pt (nth t-connects (first best)) :take (first best)})))))
 
 (defn basic-candidates
   "First set of considerations when pick candidate connection positions."
@@ -399,6 +369,26 @@
                 (conj (-> pn :geom name :y))))
           []
           names))
+
+(defn arc-place-geom
+  "Produce a map {:px x :py y} for the position where arc meets place."
+  [pn trans place arc]
+  (let [[tx ty px py] (ref-points pn trans place) ; both are center points
+        bc (intersect-circle ; base
+            (double (- tx px))
+            (double (- ty py))
+            0.0
+            0.0
+            (/ +place-dia+ 2.0))
+        tc {:x1 (+ (:x1 bc) px) ; translated
+            :y1 (+ (:y1 bc) py)
+            :x2 (+ (:x2 bc) px)
+            :y2 (+ (:y2 bc) py)}]
+    ;; choose closest intersection on circle
+    (if (< (distance (:x1 tc) (:y1 tc) tx ty)
+           (distance (:x2 tc) (:y2 tc) tx ty))
+      {:px (:x1 tc) :py (:y1 tc)}
+      {:px (:x2 tc) :py (:y2 tc)})))
 
 (defn intersect-circle
   "http://mathworld.wolfram.com/Circle-LineIntersection.html"
@@ -586,17 +576,4 @@
              (< 0.0 (/ (- x x3) (- x4 x3)) 1.0)
              (< 0.0 (/ (- y y1) (- y2 y1)) 1.0)
              (< 0.0 (/ (- y y3) (- y4 y3)) 1.0))))))
-#?(:clj
-   (defn show-it []
-     (reset! +display-pn+ (pn-geom (load-file "data/pn2-2018-01-19.clj") nil))
-     (q/defsketch best-pn ;cljs :features [:resizable :keep-on-top]
-       :host "best-pn"
-       :title "Best Individual"
-       :features [:keep-on-top]
-       ;; Smooth=2 is typical. Can't use pixel-density with js.
-       :settings #(fn [] (q/smooth 2)
-                    (q/pixel-density 2))
-       :mouse-wheel pn-wheel-fn
-       :setup setup-pn
-       :draw draw-pn
-       :size [900 500])))
+
