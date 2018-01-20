@@ -1,4 +1,4 @@
-(ns pn-draw.core
+(ns pdenno.pn-draw.core
   "Petri net draw code"
   {:author "Peter Denno"}
   (:require [quil.core :as q]
@@ -54,7 +54,6 @@
 (def +arrowhead-angle+ "zero is on the shaft" (/ Math/PI 8.0))
 (def +lock-mouse-on+ (atom nil))
 (def +hilite-elem+ (atom nil))
-;;; POD need not be an atom!
 (def +display-pn+ (atom nil)) 
 
 (defn rotate [x y theta]

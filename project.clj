@@ -1,4 +1,4 @@
-(defproject pn-draw "0.1.0-SNAPSHOT"
+(defproject pdenno/pn-draw "0.1.0-SNAPSHOT"
   :description "Draw stuff from sinet"
   :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"
