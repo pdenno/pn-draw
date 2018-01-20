@@ -12,9 +12,9 @@
 ;;;       - Prevent coincident lines. (Example in m2-j2-bas.xml) 
 ;;;       - Find a way that labels can get focus despite their proximity to objects.
 ;;;       - display multiplicities > 1
-;;;       - selective redraw 
+;;;       - selective redraw
 
-(def +display-pn+ (atom nil))
+(declare pn-geom)
 
 ;;;================== Stuff borrowed from pnu (not cljs)  ========================
 #?(:cljs
@@ -54,7 +54,8 @@
 (def +arrowhead-angle+ "zero is on the shaft" (/ Math/PI 8.0))
 (def +lock-mouse-on+ (atom nil))
 (def +hilite-elem+ (atom nil))
-(defonce +display-pn+ (atom nil))
+;;; POD need not be an atom!
+(def +display-pn+ (atom nil)) 
 
 (defn rotate [x y theta]
   "Rotate (x,y) theta radians about origin."
@@ -586,9 +587,9 @@
              (< 0.0 (/ (- x x3) (- x4 x3)) 1.0)
              (< 0.0 (/ (- y y1) (- y2 y1)) 1.0)
              (< 0.0 (/ (- y y3) (- y4 y3)) 1.0))))))
-
 #?(:clj
    (defn show-it []
+     (reset! +display-pn+ (pn-geom (load-file "data/pn2-2018-01-19.clj") nil))
      (q/defsketch best-pn ;cljs :features [:resizable :keep-on-top]
        :host "best-pn"
        :title "Best Individual"
