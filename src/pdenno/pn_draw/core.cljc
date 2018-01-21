@@ -2,7 +2,7 @@
   "Petri net draw code"
   (:require [quil.core :as q]
             [quil.middleware :as qm]
-            [pdenno.pn-draw.util :as util :refer :all]))
+            [pdenno.pn-draw.util :as pndu]))
 
 ;;; ToDo: * Replace pn-trans-point: review everything on the trans and distribute
 ;;;         so that things are on the correct side, not overlapping, and spaced nicely.
@@ -14,19 +14,12 @@
 ;;;       - display multiplicities > 1
 ;;;       - selective redraw
 
-(declare pn-geom basic-candidates trans-connects)
-
-(defn transition? [obj] (:tid obj))
-(defn arc? [obj] (:aid obj))
-(defn place? [obj] (:pid obj))
-(defn pn? [obj] (and (:places obj) (:transitions obj) (:arcs obj) obj))
-
-(defn name2obj
-  [pn name]
-  (or 
-   (some #(when (= name (:name %)) %) (:places pn))
-   (some #(when (= name (:name %)) %) (:transitions pn))
-   (some #(when (= name (:name %)) %) (:arcs pn))))
+(declare pn-geom basic-candidates trans-connects draw-tkn)
+(declare nearest-elem ref-points draw-elem draw-arc draw-tokens)
+(declare arc-coords arrowhead-coords pt-from-head)
+(declare angle crossed? hilite-elem! handle-move! rotate-trans!)
+(declare arc-place-geom arc-trans-geom interesect-circle pn-trans-point trans-connects)
+(declare calc-new-geom match-geom best-match)
 
 (def +place-dia+ 26)
 (def +trans-width+ 36)
@@ -74,10 +67,6 @@
   (q/frame-rate 20)    ; FPS. 10 is good
   (q/text-font (q/create-font "DejaVu Sans" 12 true))
   (q/background 200)) ; light grey
-
-(declare nearest-elem ref-points draw-elem draw-arc draw-tokens)
-(declare arc-coords arrowhead-coords pt-from-head)
-(declare angle distance cross? hilite-elem! handle-move! rotate-trans!)
 
 (defn draw-pn []
   (when-let [pn @+display-pn+]
@@ -132,8 +121,8 @@
   (let [[bkey min-d label?]
         (reduce
          (fn [[bkey min-d label?] [key val]]
-           (let [delem  (Math/round (distance (into mxy (vector (:x val) (:y val)))))
-                 dlabel (Math/round (distance (into mxy (vector (+ (:x val) (:label-x-off val))
+           (let [delem  (Math/round (pndu/distance (into mxy (vector (:x val) (:y val)))))
+                 dlabel (Math/round (pndu/distance (into mxy (vector (+ (:x val) (:label-x-off val))
                                                                 (+ (:y val) (:label-y-off val))))))
                  min? (min delem dlabel min-d)]
              (if (= min? delem)
@@ -177,7 +166,7 @@
             (+ y (-> pn :geom n :label-y-off)))
     (q/fill 0)
     (q/stroke (if (and (= (:name hilite) n) (not (:label? hilite))) (q/color 255 0 0) 0))
-    (if (place? elem)
+    (if (pndu/place? elem)
       (do
         (q/fill 255)
         (q/ellipse x y +place-dia+ +place-dia+)
@@ -188,7 +177,6 @@
     (q/stroke 0)
     (q/fill 0)))
 
-(declare draw-tkn intersect-circle)
 (defn draw-tokens
   [cnt x y]
   (let [d (+ +token-dia+ 1)]
@@ -224,8 +212,8 @@
         xmid   (/ (+ x1 x2) 2.0)
         ymid   (/ (+ y1 y2) 2.0)
         {xnear :x ynear :y} (pt-from-head x1 y1 xmid ymid offset)
-        len (distance xmid ymid xnear ynear)
-        angle (angle x1 y1 x2 y2)
+        len (pndu/distance xmid ymid xnear ynear)
+        angle (pndu/angle x1 y1 x2 y2)
         xl (+ len (* offset (Math/cos (- Math/PI offset-angle))))
         yl (* offset (Math/sin (- Math/PI offset-angle)))
         lrotate (rotate xl yl angle)]
@@ -234,7 +222,7 @@
 
 (defn draw-arc
   [pn arc]
-  (let [place-is-head? (place? (name2obj pn (:target arc))),
+  (let [place-is-head? (pndu/place? (pndu/name2obj pn (:target arc))),
         inhibitor? (= :inhibitor (:type arc)),
         ln (if place-is-head? 
              (arc-coords pn (:source arc) (:target arc) (:name arc))
@@ -259,15 +247,11 @@
               (q/line (:tx ln) (:ty ln) (:xl ahc) (:yl ahc))
               (q/line (:tx ln) (:ty ln) (:xr ahc) (:yr ahc))))))))
 
-(defn distance
-  ([x1 y1 x2 y2] (Math/sqrt (+ (Math/pow (- x1 x2) 2) (Math/pow (- y1 y2) 2))))
-  ([line] (let [[x1 y1 x2 y2] line] (distance x1 y1 x2 y2))))
-
 (defn arrowhead-coords
   "Provide coordinates for the two points at the end of the edges of arrow at (x2,y2)"
   [x1 y1 x2 y2]
-  (let [len (distance x1 y1 x2 y2)
-        angle (angle x1 y1 x2 y2) 
+  (let [len (pndu/distance x1 y1 x2 y2)
+        angle (pndu/angle x1 y1 x2 y2) 
         xl (+ len (* +arrowhead-length+ (Math/cos (- Math/PI +arrowhead-angle+))))
         xr (+ len (* +arrowhead-length+ (Math/cos (+ Math/PI +arrowhead-angle+))))
         yl (* +arrowhead-length+ (Math/sin (- Math/PI +arrowhead-angle+)))
@@ -277,26 +261,14 @@
     {:xl (+ x1 (:x lrotate)) :yl (+ y1 (:y lrotate))
      :xr (+ x1 (:x rrotate)) :yr (+ y1 (:y rrotate))}))
   
-(defn angle [x1 y1 x2 y2]
-  "Calculate angle from horizontal."
-  (let [scale (distance x1 y1 x2 y2)]
-    (when (> scale 0)
-      (let [xr (/ (- x2 x1) scale)
-            yr (/ (- y2 y1) scale)]
-        (cond (and (>= xr 0) (>= yr 0)) (Math/acos xr),
-              (and (>= xr 0) (<= yr 0)) (- (* 2.0 Math/PI) (Math/acos xr)),
-              (and (<= xr 0) (>= yr 0)) (Math/acos xr)
-              :else  (- (* 2.0 Math/PI) (Math/acos xr)))))))
-
 (defn pt-from-head
   "Return a point d units beyond (or within, if negative) the line segment."
   [x1 y1 x2 y2 d]
-  (let [len (distance x1 y1 x2 y2)
+  (let [len (pndu/distance x1 y1 x2 y2)
         ratio (/ (+ len d) len)]
     {:x (+ x1 (* ratio (- x2 x1)))
      :y (+ y1 (* ratio (- y2 y1)))}))
 
-(declare arc-place-geom arc-trans-geom interesect-circle pn-trans-point trans-connects)
 (defn arc-coords
   "Return arc coordinates for argument arc (has aid)."
   [pn trans place arc]
@@ -318,7 +290,7 @@
     (if (and me-now? (not @+lock-mouse-on+)) ; did it already assigned and elements are not being moved.
       (t-result me-now?)
       (let [[cx cy tx ty] (ref-points pn place trans) ; these are center points
-            D (zipmap (range 16) (map (fn [txy] (distance (into [cx cy] txy))) t-connects))
+            D (zipmap (range 16) (map (fn [txy] (pndu/distance (into [cx cy] txy))) t-connects))
             gfn (fn [n] [n (get D n)])
             top-showing? (< (get D 2) (get D 9))
             left-showing? (< (get D 1) (get D 0))
@@ -374,7 +346,7 @@
   "Produce a map {:px x :py y} for the position where arc meets place."
   [pn trans place arc]
   (let [[tx ty px py] (ref-points pn trans place) ; both are center points
-        bc (intersect-circle ; base
+        bc (pndu/intersect-circle ; base
             (double (- tx px))
             (double (- ty py))
             0.0
@@ -385,27 +357,10 @@
             :x2 (+ (:x2 bc) px)
             :y2 (+ (:y2 bc) py)}]
     ;; choose closest intersection on circle
-    (if (< (distance (:x1 tc) (:y1 tc) tx ty)
-           (distance (:x2 tc) (:y2 tc) tx ty))
+    (if (< (pndu/distance (:x1 tc) (:y1 tc) tx ty)
+           (pndu/distance (:x2 tc) (:y2 tc) tx ty))
       {:px (:x1 tc) :py (:y1 tc)}
       {:px (:x2 tc) :py (:y2 tc)})))
-
-(defn intersect-circle
-  "http://mathworld.wolfram.com/Circle-LineIntersection.html"
-  [x1 y1 x2 y2 r]
-  (let [dx (- x2 x1)
-        dy (- y2 y1)
-        dr (Math/sqrt (+ (* dx dx) (* dy dy)))
-        D (- (* x1 y2) (* x2 y1))
-        sgnDy (if (< dy 0) -1.0 1.0)
-        rootTerm (Math/sqrt (- (* r r dr dr) (* D D)))
-        denom (* dr dr)]
-    {:x1 (/ (+ (* D dy) (* sgnDy dx rootTerm)) denom)
-     :y1 (/ (+ (- (* D dx)) (* (Math/abs dy) rootTerm)) denom)
-     :x2 (/ (- (* D dy) (* sgnDy dx rootTerm)) denom)
-     :y2 (/ (- (- (* D dx)) (* (Math/abs dy) rootTerm)) denom)}))
-
-;;; The actual quil/defsketch is in client.cljs. (Otherwise it doesn't load.) 
 
 #?(:clj  (def last-rot (atom (System/currentTimeMillis))))
 #?(:cljs (def last-rot (atom (.getTime (js/Date.)))))
@@ -470,7 +425,6 @@
       (assoc ?r :x-off (- (:x-start params) (:min-x range)))
       (assoc ?r :y-off (- (:y-start params) (:min-y range))))))
 
-(declare calc-new-geom match-geom best-match)
 (defn pn-geom
   "Compute reasonable display placement (:geom) for the argument PN."
   [pn old-pn]
