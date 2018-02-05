@@ -15,8 +15,8 @@
 (defn show-it []
   (update-pn new-pn)
   (q/defsketch best-pn ;cljs :features [:resizable :keep-on-top]
-    :host "best-pn"
-    :title "Best Individual"
+    :host "Tryme-PN"
+    :title "A Petri Net"
     :features [:keep-on-top]
     ;; Smooth=2 is typical. Can't use pixel-density with js.
     :settings #(fn [] (q/smooth 2)

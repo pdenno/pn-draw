@@ -1,9 +1,7 @@
-(ns gov.nist.sinet.simulate
+(ns pdenno.pn-draw.simulate
   (:require [clojure.pprint :refer (cl-format pprint pp)]
             [gov.nist.spntools.util.reach :as pnr]
-            [gov.nist.spntools.util.utils :as pnu :refer (ppprint ppp as-pn-ok-> name2obj)]
-            [gov.nist.spntools.util.pnml  :as pnml]
-            [gov.nist.sinet.util :as util :refer (*debugging*)]))
+            [gov.nist.spntools.util.utils :as pnu :refer (ppprint ppp name2obj)]))
 
 ;;; Purpose: Run a PN, producing a log of its execution.
 
@@ -28,7 +26,7 @@
 ;;; (simulate (:pn eee) :max-steps 2)
 (defn simulate
   "Run a PN for max-steps or max-token whichever comes first."
-  [pn & {:keys [max-token max-steps] :or {max-token 50 max-steps 200}}] ; POD buglet: specify both
+  [pn & {:keys [max-token max-steps] :or {max-token 50 max-steps 1}}] ; POD buglet: specify both
   (let [id (atom 0)]
     (as-> pn ?pn
       (pnr/renumber-pids ?pn)
@@ -209,12 +207,10 @@
 (defn validate-move
   "Throw errors when things go wrong with queues."
   [pn]
-  (if *debugging*
-    (-> pn
-        validate-pulled
-        validate-queues
-        validate-remove)
-    pn))
+  (-> pn
+      validate-pulled
+      validate-queues
+      validate-remove))
 
 (defn moved-tkns
   "Study queues to determine what tokens have moved."
@@ -314,4 +310,3 @@
                 (max mx (apply max ids)))))
           0
           (-> pn :sim :queues vals)))
-
