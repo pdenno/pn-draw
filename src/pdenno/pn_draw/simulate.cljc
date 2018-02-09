@@ -1,7 +1,7 @@
 (ns pdenno.pn-draw.simulate
   (:require [clojure.pprint :refer (cl-format pprint pp)]
-            [gov.nist.spntools.util.reach :as pnr]
-            [gov.nist.spntools.util.utils :as pnu :refer (ppprint ppp name2obj)]))
+            [gov.nist.spntools.reach :as pnr]
+            [gov.nist.spntools.utils :as pnu :refer (ppprint ppp name2obj)]))
 
 ;;; Purpose: Run a PN, producing a log of its execution.
 
@@ -24,7 +24,7 @@
 (declare sim-effects pick-link step-state update-log-for-step max-tkn)
 ;;; Not yet a stochastic simulation, also need to implement free choice.
 ;;; (simulate (:pn eee) :max-steps 2)
-(defn simulate
+(defn simulate ; POD xml
   "Run a PN for max-steps or max-token whichever comes first."
   [pn & {:keys [max-token max-steps] :or {max-token 50 max-steps 1}}] ; POD buglet: specify both
   (let [id (atom 0)]
@@ -43,7 +43,7 @@
               (range max-steps)))))
 
 ;;; POD: Currently I'm using next-links, because there is only one colour.
-(defn sim-effects
+(defn sim-effects ; POD xml
   "Update the PN's :sim with the effects of one step."
   [pn]
   (let [marking (vec (map count (queues-marking-order pn)))

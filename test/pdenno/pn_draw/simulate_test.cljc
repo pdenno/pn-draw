@@ -2,9 +2,8 @@
   (:require [clojure.test :refer :all]
             [clojure.pprint :refer (cl-format pprint pp)]
             [gov.nist.spntools.core :as spn]
-            [gov.nist.spntools.util.reach :as pnr]
-            [gov.nist.spntools.util.utils :as pnu]
-            [gov.nist.spntools.util.pnml  :as pnml]
+            [gov.nist.spntools.reach :as pnr]
+            [gov.nist.spntools.utils :as pnu]
             [pdenno.pn-draw.simulate :as sim]))
 
 (defn diag-force-priority

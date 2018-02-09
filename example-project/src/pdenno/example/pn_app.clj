@@ -1,19 +1,18 @@
 (ns pdenno.example.pn-app
   "Petri net draw code"
   (:require [quil.core :as q]
-            [pdenno.pn-draw.util :as util :refer :all]
-            [pdenno.pn-draw.core :as pnd :refer [+display-pn+]]))
+            [pdenno.pn-draw.util :as util]
+            [pdenno.pn-draw.core :as pnd]))
 
 ;;; Start it in a terminal with lein repl. (You can later cider-connect.)
 ;;; Run (show-it) from the terminal repl. 
 
-(def new-pn (load-file "data/PNs/pn2-2018-01-19-geom.clj"))
-
-(defn update-pn [new-pn]
-  (reset! +display-pn+ (pnd/pn-geom new-pn new-pn)))
 
 (defn show-it []
-  (update-pn new-pn)
+  (dosync (ref-set pnd/the-pn
+                   (-> "resources/public/PNs/pn2-2018-01-19-geom.clj"
+                       load-file
+                       pnd/pn-geom)))
   (q/defsketch best-pn ;cljs :features [:resizable :keep-on-top]
     :host "Tryme-PN"
     :title "A Petri Net"

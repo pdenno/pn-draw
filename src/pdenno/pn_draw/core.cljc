@@ -3,7 +3,7 @@
   (:require [quil.core :as q]
             [quil.middleware :as qm]
             [pdenno.pn-draw.util :as pndu :refer (ppprint ppp)]
-            [gov.nist.spntools.util.utils :as pnu]
+            [gov.nist.spntools.utils :as pnu]
             [pdenno.pn-draw.simulate :as sim]))
 
 ;;; ToDo: * Replace pn-trans-point: review everything on the trans and distribute
@@ -35,15 +35,15 @@
                         :inhibit-dia 10
                         :arrowhead-length 12
                         :arrowhead-angle (/ Math/PI 8.0) ; zero is on the shaft.
-                        :image-files {:right-arrow "data/images/small-blue-arrow.jpg"}}]
+                        :image-files {:right-arrow "resources/public/images/small-blue-arrow.jpg"}}]
               (as-> data ?d
                 (assoc ?d :right-arrow                     ; Placement of right-arrow.
                        {:x-pos (- (:window-length ?d) 60)
                         :y-pos 10 :size 50}))))
                                         
-(def lock-mouse-on nil)
-(def hilite-elem nil)
-(def the-pn nil)
+(def lock-mouse-on (atom nil)) ; clojurescript: no alter-var-root, no with-local-vars
+(def hilite-elem (atom nil))
+(def the-pn (atom nil))
 
 #?(:clj  (defn now [] (System/currentTimeMillis)))
 #?(:cljs (defn now [] (.getTime (js/Date.))))
@@ -78,28 +78,27 @@
      (vec (map (fn [[x y]] (srotate x y (* Math/PI 0.50))) base))
      (vec (map (fn [[x y]] (srotate x y (* Math/PI 0.75))) base))]))
 
-(def right-arrow nil)
+(def right-arrow (atom nil))
 
 (defn setup-pn []
-  (alter-var-root #'right-arrow
-                  (constantly (q/load-image (-> params :image-files :right-arrow))))
+  (reset! right-arrow (q/load-image (-> params :image-files :right-arrow)))
   (q/frame-rate 20)    ; FPS. 10 is good
   (q/text-font (q/create-font "DejaVu Sans" 12 true))
   (q/background 200)) ; light grey
 
 (defn draw-pn []
-  (when-let [pn the-pn]
+  (when-let [pn @the-pn]
     (q/background 230) ; POD not sure I want to keep this.
     (q/stroke 0) ; black
     (q/fill 255) ; white
     (q/stroke-weight 1)
-    (q/image right-arrow 
+    (q/image @right-arrow 
              (-> params :right-arrow :x-pos)
              (-> params :right-arrow :y-pos))
     (hilite-elem! pn)
     (if (q/mouse-pressed?)
       (handle-move-or-button!)
-      (alter-var-root #'lock-mouse-on (constantly nil)))
+      (reset! lock-mouse-on nil))
     (doseq [place (:places pn)]
       (draw-elem pn place))
     (doseq [trans (:transitions pn)]
@@ -125,8 +124,6 @@
     (handle-sim-step!)
     (handle-move!)))
 
-(def last-step 0)
-
 (defn update-marking
   [pn]
   (reduce (fn [pn [place cnt]]
@@ -137,43 +134,43 @@
            (:marking-key pn)
            (map count (sim/queues-marking-order pn)))))
 
+(def last-step (atom 0))
+
 (defn handle-sim-step!
   "Update the-pn marking to reflect one (stochastic) step."
   []
-  (when (> (- (now) last-step) 500) ; avoid stuttering.
-    (alter-var-root #'last-step (constantly (now)))
-    (println "Step it!")
-    (alter-var-root #'the-pn
-                    #(-> %
-                         sim/simulate
-                         update-marking))))
+  (when (> (- (now) @last-step) 500) ; avoid stuttering.
+     (reset! last-step (now))
+     (swap! the-pn
+            #(-> %
+                 sim/simulate
+                 update-marking))))
 
 (defn handle-move!
   "Mouse pressed: Update coordinates to move an element or its label."
   []
-  (when-let [elem (or lock-mouse-on (nearest-elem the-pn [(q/mouse-x) (q/mouse-y)]))]
-    (alter-var-root
-     #'the-pn
-     #(let [n (:name elem)]
-        (if (:label? elem)
-          (as-> % ?pn
-            (assoc-in ?pn [:geom n :label-x-off]
-                      (- (q/mouse-x) (-> ?pn :geom n :x)))
-            (assoc-in ?pn [:geom n :label-y-off]
-                      (- (q/mouse-y) (-> ?pn :geom n :y))))
-          (as-> % ?pn
-            (assoc-in ?pn [:geom n :x] (q/mouse-x))
-            (assoc-in ?pn [:geom n :y] (q/mouse-y))))))))
+  (when-let [elem (or @lock-mouse-on (nearest-elem @the-pn [(q/mouse-x) (q/mouse-y)]))]
+    (swap! the-pn
+           #(let [n (:name elem)]
+              (if (:label? elem)
+                (as-> % ?pn
+                  (assoc-in ?pn [:geom n :label-x-off]
+                            (- (q/mouse-x) (-> ?pn :geom n :x)))
+                  (assoc-in ?pn [:geom n :label-y-off]
+                            (- (q/mouse-y) (-> ?pn :geom n :y))))
+                (as-> % ?pn
+                  (assoc-in ?pn [:geom n :x] (q/mouse-x))
+                  (assoc-in ?pn [:geom n :y] (q/mouse-y))))))))
 
 (defn hilite-elem!
   "Set hilite-elem and maybe lock-mouse-on."
   [pn]
-  (let [nearest (or lock-mouse-on (nearest-elem pn [(q/mouse-x) (q/mouse-y)]))]
+  (let [nearest (or @lock-mouse-on (nearest-elem pn [(q/mouse-x) (q/mouse-y)]))]
     (when (and nearest (q/mouse-pressed?))
-      (alter-var-root #'lock-mouse-on (constantly nearest)))
+      (reset! lock-mouse-on nearest))
     (if nearest
-      (alter-var-root #'hilite-elem (constantly nearest))
-      (alter-var-root #'hilite-elem (constantly nil)))))
+      (reset! hilite-elem nearest)
+      (reset! hilite-elem nil))))
 
 (defn nearest-elem
   "Return a element (place/trans) map indicating what was closest to the mouse.
@@ -206,7 +203,7 @@
   "Draw a transition with rotation as indicated by :rotate."
   [name x y]
   (q/with-translation [x y] ;[(+ x half-tw) (+ y half-th)]
-    (q/with-rotation [(if-let [n (-> the-pn :geom name :rotate)]
+    (q/with-rotation [(if-let [n (-> @the-pn :geom name :rotate)]
                         (nth rots n)
                         0.0)]
       (q/rect (- half-tw) (- half-th) (:trans-width params) (:trans-height params)))))
@@ -219,7 +216,7 @@
   (let [n (:name elem)
         x (-> pn :geom n :x)
         y (-> pn :geom n :y)
-        hilite hilite-elem]
+        hilite @hilite-elem]
     (q/fill (if (and (= n (:name hilite))
                      (:label? hilite))
               (q/color 255 0 0) 0))
@@ -353,7 +350,7 @@
   (let [me-now? (-> pn :geom trans :taken arc)
         t-connects (trans-connects pn trans)
         t-result (fn [take] (let [c (nth t-connects take)] {:tx (first c) :ty (second c) :take take}))]
-    (if (and me-now? (not lock-mouse-on)) ; did it already assigned and elements are not being moved.
+    (if (and me-now? (not @lock-mouse-on)) ; did it already assigned and elements are not being moved.
       (t-result me-now?)
       (let [[cx cy tx ty] (ref-points pn place trans) ; these are center points
             D (zipmap (range 16) (map (fn [txy] (pndu/distance (into [cx cy] txy))) t-connects))
@@ -361,7 +358,7 @@
             top-showing? (< (get D 2) (get D 9))
             left-showing? (< (get D 1) (get D 0))
             closest (first (sort (fn [[_ d1] [_ d2]] (< d1 d2)) D))
-            taken-map (-> the-pn :geom trans :taken)
+            taken-map (-> @the-pn :geom trans :taken)
             taken (set (remove #(= % me-now?) (vals taken-map)))
             not-taken? (fn [n] (not (contains? taken n)))
             y-diff (Math/abs (double (- cy ty))) 
@@ -381,7 +378,7 @@
   "Return a vector of [x, y] being the 16 connection points on a transition"
   [pn trans]
   (let [[rx ry] (ref-points pn trans)
-        rotation (or (-> the-pn :geom trans :rotate) 0)
+        rotation (or (-> @the-pn :geom trans :rotate) 0)
         offsets (nth +rot-offsets+ rotation)]
     (vec (map (fn [[xoff yoff]] (vector (+ rx xoff) (+ ry yoff))) offsets))))
 
@@ -428,23 +425,22 @@
       {:px (:x1 tc) :py (:y1 tc)}
       {:px (:x2 tc) :py (:y2 tc)})))
 
-(def last-rot 0)
+(def last-rot (atom 0))
 
 (defn pn-wheel-fn
   [_]
-  (when-let [hilite hilite-elem]
+  (when-let [hilite @hilite-elem]
     (when (contains? hilite :tid)
       (let [time-now (now)]
         (when (> (- time-now last-rot) 250)
-          (alter-var-root #'last-rot (constantly time-now))
-          (alter-var-root #'the-pn
-                          (fn [pn]
-                            (update-in pn
-                                       [:geom (:name hilite)]
-                                       #(cond (not (contains? % :rotate)) (assoc % :rotate 1), 
-                                              (= 1 (:rotate %)) (assoc % :rotate 2),
-                                              (= 2 (:rotate %)) (assoc % :rotate 3),
-                                              :else (dissoc % :rotate))))))))))
+          (reset! last-rot time-now)
+          (swap! the-pn
+                 (fn [pn] (update-in pn
+                                     [:geom (:name hilite)]
+                                     #(cond (not (contains? % :rotate)) (assoc % :rotate 1), 
+                                            (= 1 (:rotate %)) (assoc % :rotate 2),
+                                            (= 2 (:rotate %)) (assoc % :rotate 3),
+                                            :else (dissoc % :rotate))))))))))
 
 ;;;---------------- window/rescaling  stuff ------------------------
 (defn pn-graph-scale
@@ -484,13 +480,13 @@
   "Set the geom to match positions of stuff on the screen now, as much as possible."
   [pn old-pn]
   (let [new-geom (calc-new-geom pn)]
-    (with-local-vars [old-geom (:geom old-pn)]
+    (let [old-geom (atom (:geom old-pn))]
       (reduce (fn [geom [key val]]
                 (if-let [old-val (key @old-geom)]
-                  (do (var-set old-geom (dissoc @old-geom key))
+                  (do (swap! old-geom #(dissoc % key))
                       (assoc geom key old-val))
                   (let [[kill-key new-val] (best-match pn old-pn new-geom @old-geom key)]
-                    (var-set old-geom (dissoc @old-geom kill-key)) ; kill-key may be nil (no good match, new-val from new-geom). 
+                    (swap! old-geom #(dissoc % kill-key)) ; kill-key may be nil (no good match, new-val from new-geom). 
                     (assoc geom key new-val))))
               {}
               new-geom))))
@@ -537,9 +533,9 @@
                    (into trans)
                    (distinct))
         angle-inc (/ (* 2 Math/PI) (count elems))]
-    (with-local-vars [angle (- angle-inc)]
+    (let [angle (atom (- angle-inc))]
       (let [geom (reduce (fn [geom ename]
-                           (var-set angle #(+ @angle angle-inc))
+                           (swap! angle #(+ % angle-inc))
                            (assoc geom ename
                                   {:x (Math/round (* 100 (Math/cos @angle)))
                                    :y (Math/round (* 100 (Math/sin @angle)))
