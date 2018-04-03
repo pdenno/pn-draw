@@ -1,6 +1,8 @@
 (ns pdenno.pn-draw.core
   "Petri net draw code"
-  (:require [quil.core :as q]
+  (:require [clojure.spec.alpha :as s]
+            [clojure.math.combinatorics :as combo]
+            [quil.core :as q]
             [quil.middleware :as qm]
             [pdenno.pn-draw.util :as pndu :refer (ppprint ppp)]
             [gov.nist.spntools.utils :as pnu]
@@ -16,13 +18,13 @@
 ;;;       - selective redraw
 
 (declare pn-geom basic-candidates trans-connects draw-tkn)
-(declare nearest-elem ref-points draw-elem draw-arc draw-tokens)
+(declare nearest-elem ref-points draw-elem draw-arc draw-tokens swap-crossed!)
 (declare arc-coords arrowhead-coords pt-from-head handle-sim-step!)
 (declare angle crossed? hilite-elem! handle-move-or-button! handle-move! rotate-trans!)
 (declare arc-place-geom arc-trans-geom interesect-circle pn-trans-point trans-connects)
 (declare calc-new-geom match-geom best-match)
 
-(def params (let [data {:window-length 900,   
+(def params (let [data {:window-length 1100,   
                         :window-height 500,
                         :x-start 30,                       ; Where to start PN drawing
                         :y-start 30                        ; Where to start PN drawing
@@ -83,7 +85,7 @@
 (defn setup-pn []
   (reset! right-arrow (q/load-image (-> params :image-files :right-arrow)))
   (q/frame-rate 20)    ; FPS. 10 is good
-  (q/text-font (q/create-font "DejaVu Sans" 12 true))
+  (q/text-font (q/create-font "DejaVu Sans" 14 true)) ; pre-JMS was 12. 
   (q/background 200)) ; light grey
 
 (defn draw-pn []
@@ -104,7 +106,8 @@
     (doseq [trans (:transitions pn)]
       (draw-elem pn trans))
     (doseq [arc (:arcs pn)]
-      (draw-arc pn arc))))
+      (draw-arc pn arc))
+    (swap-crossed!)))
 
 (def ^:private diag (atom nil))
 
@@ -286,9 +289,17 @@
         inhibitor? (= :inhibitor (:type arc)),
         ln (if place-is-head? 
              (arc-coords pn (:source arc) (:target arc) (:name arc))
-             (arc-coords pn (:target arc) (:source arc) (:name arc)))]
+             (arc-coords pn (:target arc) (:source arc) (:name arc))),
+        trans (:trans ln),
+        take (:take ln)]
+    (swap! the-pn (fn [pn]
+                    (-> pn
+                        (update-in [:geom trans :taken] #(assoc % (:name arc) take))
+                        (assoc-in  [:geom-arcs (:name arc)] {:px (:px ln) :py (:py ln) 
+                                                             :tx (:tx ln) :ty (:ty ln)}))))
     (when-not (== 1 (:multiplicity arc))
       (let [midt (multiplicity-pos ln)]
+        (q/fill 0)
         (q/text (str (:multiplicity arc)) (:x midt) (:y midt))))
     (if inhibitor? ; head is always the transition
       (let [inhibit-dia (:inhibit-dia params)
@@ -299,7 +310,10 @@
         (q/ellipse (:x center) (:y center) inhibit-dia inhibit-dia)
         (q/stroke-weight 1)
         (q/line (:px ln) (:py ln) (:x end) (:y end)))
-      (do (q/line (:tx ln) (:ty ln) (:px ln) (:py ln))
+      (do (cond (= (:draw-color arc) :red)  (do (q/stroke 255 0 0) (q/stroke-weight 2))
+                (= (:draw-color arc) :blue) (do (q/stroke 0 0 255) (q/stroke-weight 2))
+                :else (do (q/stroke 0 0 0) (q/stroke-weight 1)))
+          (q/line (:tx ln) (:ty ln) (:px ln) (:py ln))
           (if place-is-head?
             (let [ahc (arrowhead-coords (:tx ln) (:ty ln) (:px ln) (:py ln))]
               (q/line (:px ln) (:py ln) (:xl ahc) (:yl ahc))
@@ -419,11 +433,12 @@
             :y1 (+ (:y1 bc) py)
             :x2 (+ (:x2 bc) px)
             :y2 (+ (:y2 bc) py)}]
-    ;; choose closest intersection on circle
-    (if (< (pndu/distance (:x1 tc) (:y1 tc) tx ty)
-           (pndu/distance (:x2 tc) (:y2 tc) tx ty))
-      {:px (:x1 tc) :py (:y1 tc)}
-      {:px (:x2 tc) :py (:y2 tc)})))
+    (merge {:trans trans :place place}
+           ;; choose closest intersection on circle
+           (if (< (pndu/distance (:x1 tc) (:y1 tc) tx ty)
+                  (pndu/distance (:x2 tc) (:y2 tc) tx ty))
+             {:px (-> tc :x1 Math/round) :py (-> tc :y1 Math/round)}
+             {:px (-> tc :x2 Math/round) :py (-> tc :y2 Math/round)}))))
 
 (def last-rot (atom 0))
 
@@ -432,7 +447,7 @@
   (when-let [hilite @hilite-elem]
     (when (contains? hilite :tid)
       (let [time-now (now)]
-        (when (> (- time-now last-rot) 250)
+        (when (> (- time-now @last-rot) 350)
           (reset! last-rot time-now)
           (swap! the-pn
                  (fn [pn] (update-in pn
@@ -528,9 +543,9 @@
   [pn]
   (let [places (->> pn :places (map :name))
         trans  (->> pn :transitions (map :name))
-        elems  (-> (vec (interleave places trans))
-                   (into places)
+        elems  (-> (vec (interleave trans places))
                    (into trans)
+                   (into places)
                    (distinct))
         angle-inc (/ (* 2 Math/PI) (count elems))]
     (let [angle (atom (- angle-inc))]
@@ -548,21 +563,23 @@
 (defn eqn
   "Return a vector [a,b,c] for line eqn  ax + by = c given two points."
   [x1 y1 x2 y2]
-  (let [[x1 y1 x2 y2] (mapv double [x1 y1 x2 y2])
-        slope   (/ (- y2 y1) (- x2 x1))
-        y-cept  (- y1 (* slope x1))
-        a (- slope)
-        b 1 
-        c y-cept]
-    [a b c]))
+  (when-not (== x1 x2)
+    (let [[x1 y1 x2 y2] (mapv double [x1 y1 x2 y2])
+          slope   (/ (- y2 y1) (- x2 x1))
+          y-cept  (- y1 (* slope x1))
+          a (- slope)
+          b 1 
+          c y-cept]
+      [a b c])))
 
 (defn crossed?
   "Return true if the line segments defined by the points cross inside their length."
   [x1 y1 x2 y2 x3 y3 x4 y4]
   (let [[a b b1] (eqn x1 y1 x2 y2)
         [c d b2] (eqn x3 y3 x4 y4)
-        det (- (* a d) (* b c))]
-    (if (< (Math/abs det) 0.00000001)
+        det (and a c (- (* a d) (* b c)))]
+    (if (or (not det)
+            (< (Math/abs det) 0.00000001))
       false
       (let [aa (/ d det)
             bb (- (/ b det))
@@ -574,4 +591,145 @@
              (< 0.0 (/ (- x x3) (- x4 x3)) 1.0)
              (< 0.0 (/ (- y y1) (- y2 y1)) 1.0)
              (< 0.0 (/ (- y y3) (- y4 y3)) 1.0))))))
+
+(declare share-trans)
+(defn swap-crossed!
+  "Check the-pn for crossed arcs onto transitions.
+   Swap them if they are crossed."
+  []
+  (let [pn @the-pn
+        swaps (reduce-kv (fn [accum k v]
+                           (let [result (filter (fn [[a1 a2]]
+                                                  (let [arc1 (-> pn :geom-arcs a1)
+                                                        arc2 (-> pn :geom-arcs a2)]
+                                                    (when (and arc1 arc2)
+                                                      (crossed? (:tx arc1) (:ty arc1) (:px arc1) (:py arc1)
+                                                                (:tx arc2) (:ty arc2) (:px arc2) (:py arc2)))))
+                                                v)]
+                             (if (not-empty result)
+                               (assoc accum k result)
+                               accum)))
+                         {}
+                         (share-trans pn))]
+    (when (not-empty swaps)
+      (doseq [[trans [[a1 a2]]] swaps]
+        (let [geom (-> pn :geom trans)
+              save1 (a1 geom)
+              save2 (a2 geom)]
+          (reset! diag {:trans trans :a1 a1 :a2 a2 :save1 save1 :save2 save2})
+          (swap! the-pn
+                 #(-> %
+                      (assoc-in [:geom trans :taken a1] save2)
+                      (assoc-in [:geom trans :taken a2] save1))))))))
+
+(defn share-trans [pn]
+  "Return a map of vectors of arc pairs that share a connection to a transition."
+  (reduce (fn [accum trans]
+            (assoc accum
+                   trans
+                   (map vec
+                        (combo/combinations
+                         (->> (filter #(or (= (:source %) trans)
+                                           (= (:target %) trans))
+                                      (:arcs pn))
+                              (map :name))
+                         2))))
+          {}
+          (->> pn :transitions (map :name))))
+  
+
+
+
+;;;==== spec-based validation =========================
+(defn pn-names [pn]
+  "Return a collection of the names used in PN."
+  (-> (map :name (:places pn))
+      (into (map :name (:transitions pn)))))
+
+(defn connect-ok? 
+  "Check that the :source and :target of every arc is defined."
+  [pn]
+  (let [tnames (map :name (:transitions pn))
+        pnames (map :name (:places pn))]
+    (or (every? (fn [arc]
+                 (or 
+                  (and (some #(= (:source arc) %) tnames)
+                       (some #(= (:target arc) %) pnames))
+                  (and (some #(= (:target arc) %) tnames)
+                       (some #(= (:source arc) %) pnames))))
+                (:arcs pn)))))
+
+(defn missing-connection [pn]
+  (let [tnames (map :name (:transitions pn))
+        pnames (map :name (:places pn))]
+    (remove (fn [arc]
+              (or 
+               (and (some #(= (:source arc) %) tnames)
+                    (some #(= (:target arc) %) pnames))
+               (and (some #(= (:target arc) %) tnames)
+                    (some #(= (:source arc) %) pnames))))
+            (:arcs pn))))
+
+(defn geom-ok? 
+  "If the pn has :geom, it must have an entry for every place and transistion."
+  [pn]
+  (let [names (pn-names pn)
+        geom (:geom pn)]
+    (if geom
+      (every? #(contains? geom %) names)
+      true)))
+
+(defn missing-geom
+  "Returns a collection of elements that don't have :geom"
+  [pn]
+  (let [geom (:geom pn)]
+    (remove #(contains? geom %) (pn-names pn))))
+
+(s/def ::type (fn [t] (some #(= t %) [:normal :inhibitor :exponential :immediate])))
+(s/def ::target keyword?)
+(s/def ::source keyword?)
+(s/def ::multiplicity (s/and integer? pos?))
+(s/def ::aid (s/and integer? #(not (neg? %))))
+(s/def ::tid (s/and integer? #(not (neg? %))))
+(s/def ::pid (s/and integer? #(not (neg? %))))
+(s/def ::name keyword?)
+(s/def ::arc (s/keys :req-un [::aid ::source ::target ::name ::multiplicity]))
+(s/def ::transition (s/keys :req-un [::name ::tid ::type ::rate]))
+(s/def ::place (s/keys :req-un [::name ::pid ::initial-tokens]))
+(s/def ::transitions (s/coll-of ::transition :kind vector? :min-count 1))
+                            
+(s/def ::arcs (s/coll-of ::arc :kind vector? :min-count 1))
+(s/def ::places (s/coll-of ::place :kind vector? :min-count 1))
+(s/def ::draw-pn (s/and (s/keys :req-un [::places ::arcs ::transitions])
+                        #(apply distinct? (pn-names %))
+                        #(connect-ok? %)))
+
+(s/def ::mark-val (s/int-in 0 10000)) ; cljs doesn't have ##Inf. 
+(s/def ::marking (s/coll-of ::mark-val :kind vector?))
+
+(def jms-figs
+  {:fig-5  "resources/public/PNs/jms/fig-5.clj"    ; 2-machine needs token
+   :fig-7  "resources/public/PNs/jms/fig-7.clj"    ; sloppy causal (low priority)
+   :fig-8  "resources/public/PNs/jms/fig-8.clj"    ; Eden, no :wc-3-1
+   :fig-9a "resources/public/PNs/jms/fig-9a.clj"    ; New, add-machine-restart folding
+   :fig-9b "resources/public/PNs/jms/fig-9b.clj"    ; New, add-machine-restart folding
+   :fig-10 "resources/public/PNs/jms/fig-10.clj"   ; Not interpreted, small labels.
+   :fig-11 "resources/public/PNs/jms/fig-11.clj"   ; Interpreted, small labels.
+   :fig-12 "resources/public/PNs/jms/fig-12.clj"}) ; mixed-model 
+
+(defn fig [fig-num]
+  (let [pn (load-file (get jms-figs fig-num))]
+    (reset! the-pn (pn-geom pn))
+    (q/defsketch best-pn 
+      :host "Tryme-PN"
+      :title "A Petri Net"
+      :features [:keep-on-top]
+      ;; Smooth=2 is typical. Can't use pixel-density with js.
+      :settings #(fn [] (q/smooth 2)) 
+      :setup setup-pn
+      :draw draw-pn
+      :mouse-wheel pn-wheel-fn
+      :size [(:window-length params)
+             (:window-height params)])))
+
 
