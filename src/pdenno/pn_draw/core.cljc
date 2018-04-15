@@ -22,7 +22,7 @@
 (declare arc-coords arrowhead-coords pt-from-head handle-sim-step!)
 (declare angle crossed? hilite-elem! handle-move-or-button! handle-move! rotate-trans!)
 (declare arc-place-geom arc-trans-geom interesect-circle pn-trans-point trans-connects)
-(declare calc-new-geom match-geom best-match)
+(declare calc-new-geom match-geom best-match messed-up-taken? eliminate-taken-dups)
 
 (def params (let [data {:window-length 1100,   
                         :window-height 500,
@@ -106,8 +106,10 @@
       (draw-elem pn trans))
     (doseq [arc (:arcs pn)]
       (draw-arc! pn arc))
-    #_(swap-crossed!)))
-
+    (swap-crossed!)
+    (when (messed-up-taken? @the-pn)
+      (swap! the-pn eliminate-taken-dups))))
+     
 (def ^:private diag (atom nil))
 
 (defn on-button?
@@ -381,13 +383,44 @@
                           (sort (fn [[_ d1] [_ d2]] (< d1 d2)))
                           first
                           first))
-        best (if (and me-now
-                      (not (taken me-now)) ;; Keep if not much better (removes jitter).
-                      (< (Math/abs (- (get D good) (get D me-now))) 15))
-               me-now
-               good)
-        coords (nth t-connects best)]
-    {:tx (first coords) :ty (second coords) :take best}))
+;        best (if (and me-now
+;                      (not (taken me-now)) ;; Keep if not much better (removes jitter).
+;                      (< (Math/abs (- (get D good) (get D me-now))) 15))
+;               me-now
+;               good)
+        coords (nth t-connects good)]
+    {:tx (first coords) :ty (second coords) :take good}))
+
+(defn dedup-val
+  "Remove arbitrarily one of the key/value pairs that has a duplicate value or nil value."
+  [m]
+  (reduce-kv (fn [accum k v]
+               (if (or (not v) (some #(= (second %) v)  accum))
+                 accum
+                 (assoc accum k v)))
+             {}
+             m))
+
+;;; POD Should not be necessary!
+(defn messed-up-taken?
+  "Check whether there are duplicate :taken values anywhere."
+  [pn]
+  (some #(when-let [takes (not-empty (-> % :taken vals))]
+           (when (or (some (fn [v] (not v)) takes)
+                     (not (apply distinct? takes))) %))
+        (-> pn :geom vals)))
+
+(defn eliminate-taken-dups
+  "For reasons not discovered, duplicates in arc :taken arise.
+   This removes them."
+  [pn]
+  (update pn :geom
+          #(reduce-kv (fn [accum k v]
+                        (if (contains? v :taken)
+                          (assoc accum k (update v :taken dedup-val))
+                          (assoc accum k v)))
+                      {}
+                      %)))
 
 (defn trans-connects
   "Return a vector of [x, y] being the 16 connection points on a transition"
