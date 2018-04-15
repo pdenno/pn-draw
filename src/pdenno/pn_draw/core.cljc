@@ -18,7 +18,7 @@
 ;;;       - selective redraw
 
 (declare pn-geom basic-candidates trans-connects draw-tkn)
-(declare nearest-elem ref-points draw-elem draw-arc draw-tokens swap-crossed!)
+(declare nearest-elem ref-points draw-elem draw-arc! draw-tokens swap-crossed!)
 (declare arc-coords arrowhead-coords pt-from-head handle-sim-step!)
 (declare angle crossed? hilite-elem! handle-move-or-button! handle-move! rotate-trans!)
 (declare arc-place-geom arc-trans-geom interesect-circle pn-trans-point trans-connects)
@@ -75,10 +75,9 @@
               [(- p3)(- th)] [(- p4) (- th)] [(- p5) (- th)]
               [0.0 th] [p3 th] [p4 th] [p5 th]
               [(- p3) th] [(- p4) th] [(- p5) th]]]
-    [(vec (map (fn [[x y]] (srotate x y 0.0)) base))
-     (vec (map (fn [[x y]] (srotate x y (* Math/PI 0.25))) base))
-     (vec (map (fn [[x y]] (srotate x y (* Math/PI 0.50))) base))
-     (vec (map (fn [[x y]] (srotate x y (* Math/PI 0.75))) base))]))
+    (map #(let [theta (* Math/PI 0.25 %)]
+            (map (fn [[x y]] (srotate x y theta)) base))
+         (range 8))))
 
 (def right-arrow (atom nil))
 
@@ -106,8 +105,8 @@
     (doseq [trans (:transitions pn)]
       (draw-elem pn trans))
     (doseq [arc (:arcs pn)]
-      (draw-arc pn arc))
-    (swap-crossed!)))
+      (draw-arc! pn arc))
+    #_(swap-crossed!)))
 
 (def ^:private diag (atom nil))
 
@@ -201,12 +200,12 @@
 
 (def half-tw (Math/round (/ (:trans-width params) 2.0)))
 (def half-th (Math/round (/ (:trans-height params) 2.0)))
-(def rots [0.0 (* Math/PI 0.25) (* Math/PI 0.50) (* Math/PI 0.75)])
+(def rots (map #(* Math/PI 0.25 %) (range 8)))
 (defn draw-trans
   "Draw a transition with rotation as indicated by :rotate."
-  [name x y]
+  [pn name x y]
   (q/with-translation [x y] ;[(+ x half-tw) (+ y half-th)]
-    (q/with-rotation [(if-let [n (-> @the-pn :geom name :rotate)]
+    (q/with-rotation [(if-let [n (-> pn :geom name :rotate)]
                         (nth rots n)
                         0.0)]
       (q/rect (- half-tw) (- half-th) (:trans-width params) (:trans-height params)))))
@@ -235,7 +234,7 @@
         (draw-tokens (:initial-tokens elem) x y))
       ;; It's a transition
       (do (q/fill (if (= (:type elem) :immediate) 0 255))
-          (draw-trans n x y)))
+          (draw-trans pn n x y)))
     (q/stroke 0)
     (q/fill 0)))
 
@@ -283,7 +282,7 @@
     {:x (Math/round (+ xmid (:x lrotate)))
      :y (Math/round (+ ymid (:y lrotate)))}))
 
-(defn draw-arc
+(defn draw-arc!
   [pn arc]
   (let [place-is-head? (pndu/place? (pndu/name2obj pn (:target arc))),
         inhibitor? (= :inhibitor (:type arc)),
@@ -361,53 +360,54 @@
   "Return {:tx x :ty y :take <n>} of the best place for the argument arc to 
    connect to the trans. Considers rotation and other occupancy on the trans."
   [pn trans place arc]
-  (let [me-now? (-> pn :geom trans :taken arc)
-        t-connects (trans-connects pn trans)
-        t-result (fn [take] (let [c (nth t-connects take)] {:tx (first c) :ty (second c) :take take}))]
-    (if (and me-now? (not @lock-mouse-on)) ; did it already assigned and elements are not being moved.
-      (t-result me-now?)
-      (let [[cx cy tx ty] (ref-points pn place trans) ; these are center points
-            D (zipmap (range 16) (map (fn [txy] (pndu/distance (into [cx cy] txy))) t-connects))
-            gfn (fn [n] [n (get D n)])
-            top-showing? (< (get D 2) (get D 9))
-            left-showing? (< (get D 1) (get D 0))
-            closest (first (sort (fn [[_ d1] [_ d2]] (< d1 d2)) D))
-            taken-map (-> @the-pn :geom trans :taken)
-            taken (set (remove #(= % me-now?) (vals taken-map)))
-            not-taken? (fn [n] (not (contains? taken n)))
-            y-diff (Math/abs (double (- cy ty))) 
-            ;; candidates =  ([0 94.25498543]  [8 111.00450929]...) -- distances
-            candidates (->> (basic-candidates D top-showing? left-showing?)
-                             (remove (fn [c] (some #(= (first c) %) taken)))
-                             (sort (fn [[_ d1] [_ d2]] (< d1 d2))))
-            best (cond (empty? candidates) closest
-                       (and (< y-diff 5) left-showing? (not-taken? 1)) (gfn 1) 
-                       (and (< y-diff 5) (not-taken? 0)) (gfn 0)
-                       (and (:trans-prefer-center? params) top-showing? (not-taken? 2)) (gfn 2)
-                       (and (:trans-prefer-center? params) (not top-showing?) (not-taken? 9)) (gfn 9)
-                       :else (first candidates))]
-        (t-result (first best))))))
+  (let [me-now (-> pn :geom trans :taken arc)
+        ;; POD Current bug(!) means duplicates in taken. I'm careful not to remove a duplicate.
+        taken (-> pn :geom trans :taken (dissoc arc) vals set)
+        t-connects (trans-connects pn trans) ; vector of 16 connection points.
+        [cx cy tx ty] (ref-points pn place trans) ; these are center points
+        D (zipmap (range 16) (map (fn [txy] (pndu/distance (into [cx cy] txy))) t-connects))
+        top-showing?  (< (get D 2) (get D 9))
+        left-showing? (< (get D 1) (get D 0))
+        candidates (->> (basic-candidates top-showing? left-showing?) ; subset of (range 16)
+                        (remove #(taken %)))
+        y-diff (Math/abs (- cy ty)) ; y difference between centers.
+        good (cond
+               (and (< y-diff 5) left-showing? (not (taken 1))) 1 ; horizontally aligned
+               (and (< y-diff 5) (not (taken 0)))               0 ; horizontally aligned
+               (and (:trans-prefer-center? params) top-showing?       (not (taken 2))) 2
+               (and (:trans-prefer-center? params) (not top-showing?) (not (taken 9))) 9
+               :else (->> candidates
+                          (map #(vector % (get D %)))
+                          (sort (fn [[_ d1] [_ d2]] (< d1 d2)))
+                          first
+                          first))
+        best (if (and me-now
+                      (not (taken me-now)) ;; Keep if not much better (removes jitter).
+                      (< (Math/abs (- (get D good) (get D me-now))) 15))
+               me-now
+               good)
+        coords (nth t-connects best)]
+    {:tx (first coords) :ty (second coords) :take best}))
 
 (defn trans-connects
   "Return a vector of [x, y] being the 16 connection points on a transition"
   [pn trans]
   (let [[rx ry] (ref-points pn trans)
-        rotation (or (-> @the-pn :geom trans :rotate) 0)
+        rotation (or (-> pn :geom trans :rotate) 0)
         offsets (nth +rot-offsets+ rotation)]
     (vec (map (fn [[xoff yoff]] (vector (+ rx xoff) (+ ry yoff))) offsets))))
 
 (defn basic-candidates
-  "First set of considerations when pick candidate connection positions."
-  [D top-showing? left-showing?]
-  (let [gfn (fn [n] [n (get D n)])]
-    (cond (and top-showing? left-showing?)
-          (conj (map gfn '(8 7 6 2 3 4 5)) (gfn 1)),
-          top-showing?
-          (conj (map gfn '(8 7 6 2 3 4 5)) (gfn 0)),
-          left-showing?
-          (conj (map gfn '(15 14 13 9 10 11 12)) (gfn 1)),
-          :else
-          (conj (map gfn '(15 14 13 9 10 11 12)) (gfn 0)))))
+  "Return candidate connection positions given knowledge of what's showing."
+  [top-showing? left-showing?]
+  (cond (and top-showing? left-showing?)
+        [8 7 6 2 3 4 5 1]
+        top-showing?
+        [8 7 6 2 3 4 5 0]
+        left-showing?
+        [15 14 13 9 10 11 12 1]
+        :else
+        [15 14 13 9 10 11 12 0]))
   
 (defn ref-points
   "Return a vector of [x, y,...] for each named object."
@@ -442,7 +442,7 @@
 
 (def last-rot (atom 0))
 
-(defn pn-wheel-fn
+(defn pn-wheel-fn!
   [_]
   (when-let [hilite @hilite-elem]
     (when (contains? hilite :tid)
@@ -452,10 +452,10 @@
           (swap! the-pn
                  (fn [pn] (update-in pn
                                      [:geom (:name hilite)]
-                                     #(cond (not (contains? % :rotate)) (assoc % :rotate 1), 
-                                            (= 1 (:rotate %)) (assoc % :rotate 2),
-                                            (= 2 (:rotate %)) (assoc % :rotate 3),
-                                            :else (dissoc % :rotate))))))))))
+                                     #(assoc % :rotate
+                                             (if-let [rot (:rotate %)]
+                                               (mod (inc rot) 8)
+                                               1))))))))))
 
 ;;;---------------- window/rescaling  stuff ------------------------
 (defn pn-graph-scale
@@ -616,7 +616,6 @@
         (let [geom (-> pn :geom trans)
               save1 (a1 geom)
               save2 (a2 geom)]
-          (reset! diag {:trans trans :a1 a1 :a2 a2 :save1 save1 :save2 save2})
           (swap! the-pn
                  #(-> %
                       (assoc-in [:geom trans :taken a1] save2)
@@ -637,14 +636,16 @@
           {}
           (->> pn :transitions (map :name))))
   
-
-
-
 ;;;==== spec-based validation =========================
-(defn pn-names [pn]
-  "Return a collection of the names used in PN."
-  (-> (map :name (:places pn))
-      (into (map :name (:transitions pn)))))
+(defn geom-ok? 
+  "If the pn has :geom, it must have an entry for every place and transition."
+  [pn]
+  (let [names   (-> (map :name (:places pn))
+                    (into (map :name (:transitions pn))))
+        geom (:geom pn)]
+    (if geom
+      (every? #(contains? geom %) names)
+      true)))
 
 (defn connect-ok? 
   "Check that the :source and :target of every arc is defined."
@@ -659,32 +660,6 @@
                        (some #(= (:source arc) %) pnames))))
                 (:arcs pn)))))
 
-(defn missing-connection [pn]
-  (let [tnames (map :name (:transitions pn))
-        pnames (map :name (:places pn))]
-    (remove (fn [arc]
-              (or 
-               (and (some #(= (:source arc) %) tnames)
-                    (some #(= (:target arc) %) pnames))
-               (and (some #(= (:target arc) %) tnames)
-                    (some #(= (:source arc) %) pnames))))
-            (:arcs pn))))
-
-(defn geom-ok? 
-  "If the pn has :geom, it must have an entry for every place and transistion."
-  [pn]
-  (let [names (pn-names pn)
-        geom (:geom pn)]
-    (if geom
-      (every? #(contains? geom %) names)
-      true)))
-
-(defn missing-geom
-  "Returns a collection of elements that don't have :geom"
-  [pn]
-  (let [geom (:geom pn)]
-    (remove #(contains? geom %) (pn-names pn))))
-
 (s/def ::type (fn [t] (some #(= t %) [:normal :inhibitor :exponential :immediate])))
 (s/def ::target keyword?)
 (s/def ::source keyword?)
@@ -696,23 +671,46 @@
 (s/def ::arc (s/keys :req-un [::aid ::source ::target ::name ::multiplicity]))
 (s/def ::transition (s/keys :req-un [::name ::tid ::type ::rate]))
 (s/def ::place (s/keys :req-un [::name ::pid ::initial-tokens]))
-(s/def ::transitions (s/coll-of ::transition :kind vector? :min-count 1))
-                            
-(s/def ::arcs (s/coll-of ::arc :kind vector? :min-count 1))
-(s/def ::places (s/coll-of ::place :kind vector? :min-count 1))
+(s/def ::transitions (s/and (s/coll-of ::transition :kind vector? :min-count 1)
+                            #(->> % (map :name) distinct?)))
+(s/def ::arcs    (s/and (s/coll-of ::arc :kind vector? :min-count 1)
+                        #(->> % (map :name) distinct?)))
+(s/def ::places  (s/and (s/coll-of ::place :kind vector? :min-count 1)
+                        #(->> % (map :name) distinct?)))
 (s/def ::draw-pn (s/and (s/keys :req-un [::places ::arcs ::transitions])
-                        #(apply distinct? (pn-names %))
+                        #(geom-ok? %)
                         #(connect-ok? %)))
-
 (s/def ::mark-val (s/int-in 0 10000)) ; cljs doesn't have ##Inf. 
 (s/def ::marking (s/coll-of ::mark-val :kind vector?))
+
+;;;============== REPL utils =============
+(defn missing-connection
+  "REPL utility (not used in spec), return arcs for which
+   a source or target is missing." 
+  [pn]
+  (let [tnames (map :name (:transitions pn))
+        pnames (map :name (:places pn))]
+    (remove (fn [arc]
+              (or 
+               (and (some #(= (:source arc) %) tnames)
+                    (some #(= (:target arc) %) pnames))
+               (and (some #(= (:target arc) %) tnames)
+                    (some #(= (:source arc) %) pnames))))
+            (:arcs pn))))
+
+(defn missing-geom
+  "REPL utility (not used in spec).
+   Returns a collection of elements that don't have :geom"
+  [pn]
+  (let [geom (:geom pn)]
+    (remove #(contains? geom %) (pn-names pn))))
 
 (def jms-figs
   {:fig-5  "resources/public/PNs/jms/fig-5.clj"    ; 2-machine needs token
    :fig-7  "resources/public/PNs/jms/fig-7.clj"    ; sloppy causal (low priority)
    :fig-8  "resources/public/PNs/jms/fig-8.clj"    ; Eden, no :wc-3-1
-   :fig-9a "resources/public/PNs/jms/fig-9a.clj"    ; New, add-machine-restart folding
-   :fig-9b "resources/public/PNs/jms/fig-9b.clj"    ; New, add-machine-restart folding
+   :fig-9a "resources/public/PNs/jms/fig-9a.clj"   ; New, add-machine-restart folding
+   :fig-9b "resources/public/PNs/jms/fig-9b.clj"   ; New, add-machine-restart folding
    :fig-10 "resources/public/PNs/jms/fig-10.clj"   ; Not interpreted, small labels.
    :fig-11 "resources/public/PNs/jms/fig-11.clj"   ; Interpreted, small labels.
    :fig-12 "resources/public/PNs/jms/fig-12.clj"}) ; mixed-model 
@@ -728,8 +726,6 @@
       :settings #(fn [] (q/smooth 2)) 
       :setup setup-pn
       :draw draw-pn
-      :mouse-wheel pn-wheel-fn
+      :mouse-wheel pn-wheel-fn!
       :size [(:window-length params)
              (:window-height params)])))
-
-
