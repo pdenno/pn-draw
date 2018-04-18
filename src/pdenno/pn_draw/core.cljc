@@ -373,7 +373,7 @@
         candidates (->> (basic-candidates top-showing? left-showing?) ; subset of (range 16)
                         (remove #(taken %)))
         y-diff (Math/abs (- cy ty)) ; y difference between centers.
-        good (cond
+        best (cond
                (and (< y-diff 5) left-showing? (not (taken 1))) 1 ; horizontally aligned
                (and (< y-diff 5) (not (taken 0)))               0 ; horizontally aligned
                (and (:trans-prefer-center? params) top-showing?       (not (taken 2))) 2
@@ -383,13 +383,8 @@
                           (sort (fn [[_ d1] [_ d2]] (< d1 d2)))
                           first
                           first))
-;        best (if (and me-now
-;                      (not (taken me-now)) ;; Keep if not much better (removes jitter).
-;                      (< (Math/abs (- (get D good) (get D me-now))) 15))
-;               me-now
-;               good)
-        coords (nth t-connects good)]
-    {:tx (first coords) :ty (second coords) :take good}))
+        coords (nth t-connects best)]
+    {:tx (first coords) :ty (second coords) :take best}))
 
 (defn dedup-val
   "Remove arbitrarily one of the key/value pairs that has a duplicate value or nil value."
@@ -736,7 +731,9 @@
    Returns a collection of elements that don't have :geom"
   [pn]
   (let [geom (:geom pn)]
-    (remove #(contains? geom %) (pn-names pn))))
+    (remove #(contains? geom %)
+            (-> (map :name (:places pn))
+                (into (map :name (:transitions pn)))))))
 
 (def jms-figs
   {:fig-5  "resources/public/PNs/jms/fig-5.clj"    ; 2-machine needs token
