@@ -5,7 +5,7 @@
             [quil.core :as q]
             [quil.middleware :as qm]
             [pdenno.pn-draw.util :as pndu :refer (ppprint ppp)]
-            [gov.nist.spntools.utils :as pnu]
+            [pdenno.spntools.utils :as pnu]
             [pdenno.pn-draw.simulate :as sim]))
 
 ;;; ToDo: * Replace pn-trans-point: review everything on the trans and distribute

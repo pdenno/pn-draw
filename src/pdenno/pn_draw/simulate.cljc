@@ -1,7 +1,7 @@
 (ns pdenno.pn-draw.simulate
   (:require [clojure.pprint :refer (cl-format pprint pp)]
-            [gov.nist.spntools.reach :as pnr]
-            [gov.nist.spntools.utils :as pnu :refer (ppprint ppp name2obj)]))
+            [pdenno.spntools.reach :as pnr]
+            [pdenno.spntools.utils :as pnu :refer (ppprint ppp name2obj)]))
 
 ;;; Purpose: Run a PN, producing a log of its execution.
 

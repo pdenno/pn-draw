@@ -7,9 +7,8 @@
 ;;; Start it in a terminal with lein repl. (You can later cider-connect.)
 ;;; Run (show-it) from the terminal repl. 
 
-
 (defn show-it []
-  (dosync (ref-set pnd/the-pn
+  (dosync (reset! pnd/the-pn
                    (-> "resources/public/PNs/pn2-2018-01-19-geom.clj"
                        load-file
                        pnd/pn-geom)))
@@ -18,9 +17,10 @@
     :title "A Petri Net"
     :features [:keep-on-top]
     ;; Smooth=2 is typical. Can't use pixel-density with js.
-    :settings #(fn [] (q/smooth 2)
+    :settings #(fn []
+                 (q/smooth 2)
                  (q/pixel-density 2))
-    :mouse-wheel pnd/pn-wheel-fn
+    :mouse-wheel pnd/pn-wheel-fn!
     :setup pnd/setup-pn
     :draw pnd/draw-pn
     :size [900 500]))
