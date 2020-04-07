@@ -31,8 +31,9 @@
   ([x1 y1 x2 y2] (Math/sqrt (+ (Math/pow (- x1 x2) 2) (Math/pow (- y1 y2) 2))))
   ([line] (let [[x1 y1 x2 y2] line] (distance x1 y1 x2 y2))))
 
-(defn angle [x1 y1 x2 y2]
+(defn angle 
   "Calculate angle from horizontal."
+  [x1 y1 x2 y2]
   (let [scale (distance x1 y1 x2 y2)]
     (when (> scale 0)
       (let [xr (/ (- x2 x1) scale)

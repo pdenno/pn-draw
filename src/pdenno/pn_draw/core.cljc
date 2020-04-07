@@ -3,9 +3,8 @@
   (:require [clojure.spec.alpha :as s]
             [clojure.math.combinatorics :as combo]
             [quil.core :as q]
-            [quil.middleware :as qm]
-            [pdenno.pn-draw.util :as pndu :refer (ppprint ppp)]
             [pdenno.spntools.utils :as pnu]
+            [pdenno.pn-draw.util :as pndu]
             [pdenno.pn-draw.simulate :as sim]))
 
 ;;; ToDo: * Replace pn-trans-point: review everything on the trans and distribute
@@ -50,8 +49,9 @@
 #?(:clj  (defn now [] (System/currentTimeMillis)))
 #?(:cljs (defn now [] (.getTime (js/Date.))))
 
-(defn rotate [x y theta]
+(defn rotate 
   "Rotate (x,y) theta radians about origin."
+  [x y theta]
   {:x (double (- (* (Math/cos theta) x) (* (Math/sin theta) y)))
    :y (double (+ (* (Math/sin theta) x) (* (Math/cos theta) y)))}) 
 
@@ -110,7 +110,7 @@
     (when (messed-up-taken? @the-pn)
       (swap! the-pn eliminate-taken-dups))))
      
-(def ^:private diag (atom nil))
+;;;(def ^:private diag (atom nil))
 
 (defn on-button?
   [button-name]
@@ -362,11 +362,10 @@
   "Return {:tx x :ty y :take <n>} of the best place for the argument arc to 
    connect to the trans. Considers rotation and other occupancy on the trans."
   [pn trans place arc]
-  (let [me-now (-> pn :geom trans :taken arc)
-        ;; POD Current bug(!) means duplicates in taken. I'm careful not to remove a duplicate.
+  (let [;; POD Current bug(!) means duplicates in taken. I'm careful not to remove a duplicate.
         taken (-> pn :geom trans :taken (dissoc arc) vals set)
         t-connects (trans-connects pn trans) ; vector of 16 connection points.
-        [cx cy tx ty] (ref-points pn place trans) ; these are center points
+        [cx cy _ ty] (ref-points pn place trans) ; these are center points
         D (zipmap (range 16) (map (fn [txy] (pndu/distance (into [cx cy] txy))) t-connects))
         top-showing?  (< (get D 2) (get D 9))
         left-showing? (< (get D 1) (get D 0))
@@ -449,7 +448,7 @@
 
 (defn arc-place-geom
   "Produce a map {:px x :py y} for the position where arc meets place."
-  [pn trans place arc]
+  [pn trans place _]
   (let [[tx ty px py] (ref-points pn trans place) ; both are center points
         bc (pndu/intersect-circle ; base
             (double (- tx px))
@@ -522,17 +521,17 @@
 (defn match-geom
   "Set the geom to match positions of stuff on the screen now, as much as possible."
   [pn old-pn]
-  (let [new-geom (calc-new-geom pn)]
-    (let [old-geom (atom (:geom old-pn))]
-      (reduce (fn [geom [key val]]
-                (if-let [old-val (key @old-geom)]
-                  (do (swap! old-geom #(dissoc % key))
-                      (assoc geom key old-val))
-                  (let [[kill-key new-val] (best-match pn old-pn new-geom @old-geom key)]
-                    (swap! old-geom #(dissoc % kill-key)) ; kill-key may be nil (no good match, new-val from new-geom). 
-                    (assoc geom key new-val))))
-              {}
-              new-geom))))
+  (let [new-geom (calc-new-geom pn)
+        old-geom (atom (:geom old-pn))]
+  (reduce (fn [geom [key _]]
+            (if-let [old-val (key @old-geom)]
+              (do (swap! old-geom #(dissoc % key))
+                  (assoc geom key old-val))
+              (let [[kill-key new-val] (best-match pn old-pn new-geom @old-geom key)]
+                (swap! old-geom #(dissoc % kill-key)) ; kill-key may be nil (no good match, new-val from new-geom). 
+                (assoc geom key new-val))))
+          {}
+          new-geom)))
 
 (defn best-match
   "Return the [key, object] from old-geom that best matches the argument obj."
@@ -575,18 +574,18 @@
                    (into trans)
                    (into places)
                    (distinct))
-        angle-inc (/ (* 2 Math/PI) (count elems))]
-    (let [angle (atom (- angle-inc))]
-      (let [geom (reduce (fn [geom ename]
-                           (swap! angle #(+ % angle-inc))
-                           (assoc geom ename
-                                  {:x (Math/round (* 100 (Math/cos @angle)))
-                                   :y (Math/round (* 100 (Math/sin @angle)))
-                                   :label-x-off 10
-                                   :label-y-off 15}))
-                         {}
-                         elems)]
-        (rescale geom (pn-graph-scale geom))))))
+        angle-inc (/ (* 2 Math/PI) (count elems))
+        angle (atom (- angle-inc))
+        geom (reduce (fn [geom ename]
+                       (swap! angle #(+ % angle-inc))
+                       (assoc geom ename
+                              {:x (Math/round (* 100 (Math/cos @angle)))
+                               :y (Math/round (* 100 (Math/sin @angle)))
+                               :label-x-off 10
+                               :label-y-off 15}))
+                     {}
+                     elems)]
+    (rescale geom (pn-graph-scale geom))))
 
 (defn eqn
   "Return a vector [a,b,c] for line eqn  ax + by = c given two points."
@@ -649,8 +648,9 @@
                       (assoc-in [:geom trans :taken a1] save2)
                       (assoc-in [:geom trans :taken a2] save1))))))))
 
-(defn share-trans [pn]
+(defn share-trans 
   "Return a map of vectors of arc pairs that share a connection to a transition."
+  [pn]
   (reduce (fn [accum trans]
             (assoc accum
                    trans

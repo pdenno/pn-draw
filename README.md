@@ -12,9 +12,13 @@ following the token game, but it appears that I'm not done with that code. See s
 
 `lein repl`
 
-(show-it)
+`(in-ns 'pdenno.pn-draw.core)`
+
+`(fig :fig-5)`
 
 You can then connect to this repl (e.g. with `cider-connect`) if you'd like.
+
+Check out the resources/public/PNs/jms directory for example of how to code 
 
 ## To Do
 

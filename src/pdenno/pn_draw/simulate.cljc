@@ -1,7 +1,6 @@
 (ns pdenno.pn-draw.simulate
-  (:require [clojure.pprint :refer (cl-format pprint pp)]
-            [pdenno.spntools.reach :as pnr]
-            [pdenno.spntools.utils :as pnu :refer (ppprint ppp name2obj)]))
+  (:require [pdenno.spntools.reach :as pnr]
+            [pdenno.spntools.utils :as pnu]))
 
 ;;; Purpose: Run a PN, producing a log of its execution.
 
@@ -151,7 +150,6 @@
   "Update the (-> pn :sim :queues) for the effect of firing the argument transition."
   [pn link]
   (let [fire (:fire link)
-        mkey (:marking-key pn)
         a-in (remove #(= :inhibitor (:type %)) (pnu/arcs-into pn fire))
         a-out (pnu/arcs-outof pn fire)
         balance (flow-balance pn fire)]
