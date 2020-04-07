@@ -5,8 +5,9 @@ quil-based drawing and manipulation of Petri nets
 
 ## Status
 
-This program draws Petri nets (PNs) as depicted above. I have started work to allow a user to advance her PN, 
-following the token game, but it appears that I'm not done with that code. See simulate.clj. 
+This program draws Petri nets (PNs); one is depicted above. 
+I have started work to allow stepping through the states of Generalized Stochastic Petri Nets (GSPNs). 
+That code needs a little more work. See simulate.clj. 
 
 ## Installing and running the program
 
@@ -16,13 +17,15 @@ following the token game, but it appears that I'm not done with that code. See s
 
 `(fig :fig-5)`
 
-You can then connect to this repl (e.g. with `cider-connect`) if you'd like.
+For development of the code, you can then connect to the started repl (e.g. with `cider-connect`). 
 
-Check out the resources/public/PNs/jms directory for example of how to code 
+Check out the resources/public/PNs/jms directory for example of how to code a PN as .edn. 
+
+Currently, you can run GSPNs (PNs with non-immediate transitions) manually using `(handle-sim-step!)`. 
 
 ## To Do
 
 * Finish the interactive stuff in simulate.clj
 * Fix the problem with twitchy arc placement. 
-
+* Allow stepping through untimed PNs. 
 

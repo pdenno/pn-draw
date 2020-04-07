@@ -743,7 +743,8 @@
    :fig-9b "resources/public/PNs/jms/fig-9b.clj"   ; New, add-machine-restart folding
    :fig-10 "resources/public/PNs/jms/fig-10.clj"   ; Not interpreted, small labels.
    :fig-11 "resources/public/PNs/jms/fig-11.clj"   ; Interpreted, small labels.
-   :fig-12 "resources/public/PNs/jms/fig-12.clj"}) ; mixed-model 
+   :fig-12 "resources/public/PNs/jms/fig-12.clj"   ; mixed-model 
+   :ch-1   "resources/public/PNs/chapters/fig1.clj"}) ; Simplest for chapter 5. 
 
 (defn fig [fig-num]
   (let [pn (load-file (get jms-figs fig-num))]
