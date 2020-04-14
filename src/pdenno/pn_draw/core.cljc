@@ -743,7 +743,8 @@
    :fig-9b "resources/public/PNs/jms/fig-9b.clj"   ; New, add-machine-restart folding
    :fig-10 "resources/public/PNs/jms/fig-10.clj"   ; Not interpreted, small labels.
    :fig-11 "resources/public/PNs/jms/fig-11.clj"   ; Interpreted, small labels.
-   :fig-12 "resources/public/PNs/jms/fig-12.clj"   ; mixed-model 
+   :fig-12 "resources/public/PNs/jms/fig-12.clj"   ; mixed-model
+   :bbs    "resources/public/PNs/jms/bbs-with-geom.clj"      ; BBS
    :ch-1   "resources/public/PNs/chapters/fig1.clj"}) ; Simplest for chapter 5. 
 
 (defn fig [fig-num]
@@ -760,3 +761,16 @@
       :mouse-wheel pn-wheel-fn!
       :size [(:window-length params)
              (:window-height params)])))
+
+(def save-diagram (atom nil))
+
+(defn bbs2bas
+  "Programmatically swith the BBS diagram to a BAS diagram."
+  []
+  (swap! the-pn #(assoc-in % [:arcs 3 :source] :m1-start-job)))
+
+(defn bas2bbs
+  "Programmatically swith the BBS diagram to a BAS diagram."
+  []
+  (swap! the-pn #(assoc-in % [:arcs 3 :source] :m1-complete-job)))
+
